@@ -1,8 +1,8 @@
-"""empty message
+"""Add telegram_id to User model
 
-Revision ID: 517a06bd6efd
-Revises: 0de7843167a9
-Create Date: 2024-09-27 16:44:53.623093
+Revision ID: 9e809c097e75
+Revises: 96c368801a59
+Create Date: 2024-09-29 20:02:26.827866
 
 """
 from typing import Sequence, Union
@@ -12,8 +12,8 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = '517a06bd6efd'
-down_revision: Union[str, None] = '0de7843167a9'
+revision: str = '9e809c097e75'
+down_revision: Union[str, None] = '96c368801a59'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

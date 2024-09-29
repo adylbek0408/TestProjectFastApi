@@ -51,7 +51,7 @@ async def get_users(db: AsyncSession = Depends(get_db)):
 # Настройка аутентификации для админки
 class BasicAuthBackend(AuthenticationBackend):
     async def login(self, request: Request) -> bool:
-        form = await request.foarm()
+        form = await request.form()
         if form["username"] == "admin" and form["password"] == "password":
             request.session.update({"token": "admin"})
             return True

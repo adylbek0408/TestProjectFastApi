@@ -6,7 +6,7 @@ celery_app.conf.result_backend = 'redis://redis:6379/0'
 celery_app.conf.beat_schedule = {
     'check-notifications': {
         'task': 'tasks.check_and_send_notifications',
-        'schedule': 60.0,  # Выполняется каждую минуту
+        'schedule': 60.0,
     },
 }
 celery_app.conf.beat_schedule_filename = '/tmp/celerybeat-schedule'

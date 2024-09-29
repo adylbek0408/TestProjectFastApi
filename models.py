@@ -1,7 +1,8 @@
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey, BigInteger
 from sqlalchemy.orm import relationship
-from database import Base
+from sqlalchemy.ext.declarative import declarative_base
 
+Base = declarative_base()
 
 class User(Base):
     __tablename__ = 'users'
@@ -10,8 +11,8 @@ class User(Base):
     username = Column(String, index=True)
     email = Column(String, unique=True, index=True)
     password = Column(String)
+    telegram_id = Column(BigInteger, unique=True, nullable=False)
     notifications = relationship("Notification", back_populates="client")
-
 
 class Notification(Base):
     __tablename__ = 'notifications'
@@ -21,5 +22,5 @@ class Notification(Base):
     message = Column(String)
     send_date = Column(DateTime)
     is_sent = Column(Boolean, default=False)
-    client_id = Column(Integer, ForeignKey('users.id'))  # Связь с таблицей пользователей
-    client = relationship("User", back_populates="notifications")  # Отношение с пользователем
+    client_id = Column(Integer, ForeignKey('users.id'))
+    client = relationship("User", back_populates="notifications")
