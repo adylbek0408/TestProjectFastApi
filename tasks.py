@@ -1,4 +1,3 @@
-# tasks.py
 import os
 from celery import Celery
 from sqlalchemy import create_engine
@@ -17,13 +16,14 @@ logger = logging.getLogger(__name__)
 
 # Получение Telegram Bot Token из переменных окружения
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+logger.info(f"Telegram Bot Token: {TELEGRAM_BOT_TOKEN[:5]}...{TELEGRAM_BOT_TOKEN[-5:]}")
 
 # Настройка Celery
 celery_app = Celery('tasks')
 celery_app.conf.broker_url = 'redis://redis:6379/0'
 celery_app.conf.result_backend = 'redis://redis:6379/0'
 
-# Настройка подключения к базе данных
+# Настройка синхронного подключения к базе данных
 DATABASE_URL = os.getenv("DATABASE_URL")
 engine = create_engine(DATABASE_URL.replace('+asyncpg', ''))
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -31,110 +31,68 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 # Инициализация бота
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 
+
 async def send_telegram_message(chat_id, text):
     try:
+        logger.info(f"Attempting to send message to Telegram chat ID: {chat_id}")
         await bot.send_message(chat_id=chat_id, text=text)
+        logger.info(f"Message sent successfully to chat ID: {chat_id}")
         return True
     except TelegramError as e:
-        logger.error(f"Не удалось отправить сообщение в Telegram: {e}")
+        logger.error(f"Failed to send Telegram message: {e}")
         return False
+
 
 @celery_app.task
 def check_and_send_notifications():
-    logger.info("Начало проверки и отправки уведомлений")
+    logger.info("Starting check_and_send_notifications task")
 
     with SessionLocal() as session:
         current_time = datetime.now(timezone.utc)
+        logger.info(f"Current time (UTC): {current_time}")
 
         try:
-            notifications = session.execute(
-                select(Notification).filter(
-                    Notification.send_date <= current_time,
-                    Notification.is_sent == False
-                )
-            ).scalars().all()
+            all_notifications = session.execute(select(Notification)).scalars().all()
+            logger.info(f"Total notifications in database: {len(all_notifications)}")
 
-            for notif in notifications:
-                user = session.execute(select(User).filter(User.id == notif.client_id)).scalar_one_or_none()
-                if user and user.telegram_id:
-                    success = asyncio.run(send_telegram_message(
-                        user.telegram_id,
-                        f"{notif.title}\n\n{notif.message}"
-                    ))
-                    if success:
-                        notif.is_sent = True
-                        session.add(notif)
-                        logger.info(f"Уведомление {notif.id} успешно отправлено пользователю {user.username}")
+            for notif in all_notifications:
+                logger.info(
+                    f"Notification {notif.id}: title='{notif.title}', send_date={notif.send_date}, is_sent={notif.is_sent}")
+
+                if notif.send_date <= current_time and not notif.is_sent:
+                    logger.info(f"Notification {notif.id} is eligible for sending")
+                    user = session.execute(select(User).filter(User.id == notif.client_id)).scalar_one_or_none()
+                    if user and user.telegram_id:
+                        success = asyncio.run(send_telegram_message(
+                            user.telegram_id,
+                            f"{notif.title}\n\n{notif.message}"
+                        ))
+                        if success:
+                            notif.is_sent = True
+                            session.add(notif)
+                            logger.info(
+                                f"Notification {notif.id} sent successfully to user {user.username} (Telegram ID: {user.telegram_id})")
+                        else:
+                            logger.error(
+                                f"Failed to send notification {notif.id} to user {user.username} (Telegram ID: {user.telegram_id})")
                     else:
-                        logger.error(f"Не удалось отправить уведомление {notif.id} пользователю {user.username}")
+                        logger.warning(
+                            f"User with ID {notif.client_id} not found or has no Telegram ID for notification {notif.id}")
                 else:
-                    logger.warning(f"Пользователь с ID {notif.client_id} не найден или не имеет Telegram ID")
+                    if notif.is_sent:
+                        logger.info(f"Notification {notif.id} is already sent")
+                    else:
+                        logger.info(f"Notification {notif.id} is scheduled for future: {notif.send_date}")
 
             session.commit()
-            logger.info("Все уведомления обработаны и база данных обновлена")
+            logger.info("All notifications processed and database updated")
         except Exception as e:
-            logger.error(f"Ошибка в задаче check_and_send_notifications: {str(e)}", exc_info=True)
+            logger.error(f"Error in check_and_send_notifications task: {str(e)}", exc_info=True)
             session.rollback()
             raise
 
-    logger.info("Завершение проверки и отправки уведомлений")
+    logger.info("Finished check_and_send_notifications task")
 
-# main.py (FastAPI приложение)
-from fastapi import FastAPI, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
-from database import get_db
-from models import User, Notification
-from sqladmin import Admin, ModelView
-from datetime import datetime
-
-app = FastAPI()
-
-class UserAdmin(ModelView, model=User):
-    column_list = [User.id, User.username, User.email, User.telegram_id]
-
-class NotificationAdmin(ModelView, model=Notification):
-    column_list = [Notification.title, Notification.message, Notification.send_date, Notification.is_sent, Notification.client]
-    form_columns = [Notification.title, Notification.message, Notification.send_date, Notification.client]
-
-admin = Admin(app, engine)
-admin.add_view(UserAdmin)
-admin.add_view(NotificationAdmin)
-
-# Здесь можно добавить дополнительные эндпоинты, если необходимо
-
-# bot.py (Telegram бот)
-from telegram.ext import Application, CommandHandler
-
-async def start(update, context):
-    await update.message.reply_text('Привет! Я бот для отправки уведомлений.')
-
-async def check_notifications(update, context):
-    user_id = update.effective_user.id
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(Notification).join(User).filter(
-                User.telegram_id == user_id,
-                Notification.is_sent == False
-            )
-        )
-        notifications = result.scalars().all()
-
-        if notifications:
-            for notification in notifications:
-                await update.message.reply_text(f"Уведомление: {notification.title}\n\n{notification.message}")
-                notification.is_sent = True
-                session.add(notification)
-            await session.commit()
-            await update.message.reply_text("Все актуальные уведомления отправлены.")
-        else:
-            await update.message.reply_text("У вас нет новых уведомлений.")
-
-def main():
-    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-    application.add_handler(CommandHandler('start', start))
-    application.add_handler(CommandHandler('check_notifications', check_notifications))
-    application.run_polling()
 
 if __name__ == '__main__':
-    main()
+    celery_app.start()
