@@ -11,7 +11,7 @@ class User(Base):
     username = Column(String, index=True)
     email = Column(String, unique=True, index=True)
     password = Column(String)
-    telegram_id = Column(BigInteger, unique=True, nullable=False)
+    telegram_id = Column(BigInteger, unique=True, nullable=True)
     notifications = relationship("Notification", back_populates="client")
 
 class Notification(Base):
@@ -20,7 +20,7 @@ class Notification(Base):
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String, index=True)
     message = Column(String)
-    send_date = Column(DateTime)
+    send_date = Column(DateTime(timezone=True))  # Используем DateTime с часовым поясом
     is_sent = Column(Boolean, default=False)
     client_id = Column(Integer, ForeignKey('users.id'))
     client = relationship("User", back_populates="notifications")
