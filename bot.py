@@ -1,152 +1,150 @@
+# bot.py
+
 import os
-import asyncio
+import logging
 from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext, ConversationHandler
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy.future import select
-from dotenv import load_dotenv
-from models import User, Notification, Base
+from models import User, Notification
 from datetime import datetime, timezone
 
-# Загрузка переменных окружения из .env файла
-load_dotenv()
+# Настройка логирования
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# Получение настроек из переменных окружения
-DATABASE_URL = os.getenv("DATABASE_URL")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+DATABASE_URL = os.getenv("DATABASE_URL")  # Асинхронный URL базы данных
 
-# Создаем асинхронный движок SQLAlchemy
-engine = create_async_engine(DATABASE_URL, echo=True)
+# Настройка асинхронного двигателя и сессии SQLAlchemy
+engine = create_async_engine(DATABASE_URL, future=True)
+async_session = async_sessionmaker(engine, expire_on_commit=False)
 
-# Создаем асинхронную сессию
-AsyncSessionLocal = sessionmaker(
-    engine, class_=AsyncSession, expire_on_commit=False
-)
-
-# Состояния разговора
-USERNAME, EMAIL, PASSWORD = range(3)
-
-async def get_async_session():
-    async with AsyncSessionLocal() as session:
-        yield session
-
-async def check_existing_user(session: AsyncSession, telegram_id: int):
-    result = await session.execute(select(User).filter(User.telegram_id == telegram_id))
-    return result.scalar_one_or_none()
-
-async def create_user(session: AsyncSession, username: str, email: str, password: str, telegram_id: int):
-    result = await session.execute(select(User).filter(User.email == email))
-    existing_email = result.scalar_one_or_none()
-
-    if existing_email:
-        raise ValueError("Пользователь с этим email уже существует")
-
-    user = User(username=username, email=email, password=password, telegram_id=telegram_id)
-    session.add(user)
-    await session.commit()
-    await session.refresh(user)
-    return user
-
-async def start(update: Update, context: CallbackContext) -> None:
-    await update.message.reply_text('Добро пожаловать! Используйте /register для регистрации или /check_notifications для проверки уведомлений.')
-
-async def register(update: Update, context: CallbackContext) -> int:
-    async with AsyncSessionLocal() as session:
-        existing_user = await check_existing_user(session, update.effective_user.id)
-        if existing_user:
-            await update.message.reply_text(
-                'Вы уже зарегистрированы. Если вы хотите обновить свою информацию, используйте команду /update_info.')
-            return ConversationHandler.END
-        else:
-            await update.message.reply_text('Привет! Как тебя зовут?')
-            return USERNAME
-
-async def username(update: Update, context: CallbackContext) -> int:
-    context.user_data['username'] = update.message.text
-    await update.message.reply_text('Отлично! Теперь отправь мне свой email.')
-    return EMAIL
-
-async def email(update: Update, context: CallbackContext) -> int:
-    context.user_data['email'] = update.message.text
-    await update.message.reply_text('Теперь отправь мне свой пароль.')
-    return PASSWORD
-
-async def password(update: Update, context: CallbackContext) -> int:
-    user_password = update.message.text
-    async with AsyncSessionLocal() as session:
-        try:
-            await create_user(
-                session,
-                context.user_data['username'],
-                context.user_data['email'],
-                user_password,
-                update.effective_user.id
-            )
-            await update.message.reply_text('Регистрация завершена. Спасибо!')
-        except ValueError as e:
-            await update.message.reply_text(f'Ошибка регистрации: {str(e)}')
-        except Exception as e:
-            await update.message.reply_text('Произошла ошибка при регистрации. Пожалуйста, попробуйте еще раз.')
-            print(f"Полная ошибка: {e}")  # Для отладки
-    return ConversationHandler.END
-
-async def cancel(update: Update, context: CallbackContext) -> int:
-    await update.message.reply_text('Регистрация отменена.')
-    return ConversationHandler.END
-
-async def update_info(update: Update, context: CallbackContext) -> None:
-    await update.message.reply_text('Функция обновления информации пока не реализована.')
-
-async def check_notifications(update: Update, context: CallbackContext) -> None:
-    user_id = update.effective_user.id
-    async with AsyncSessionLocal() as session:
-        current_time = datetime.now(timezone.utc)
-        result = await session.execute(
-            select(Notification).join(User).filter(
-                User.telegram_id == user_id,
-                Notification.send_date <= current_time,
-                Notification.is_sent == False
-            )
-        )
-        notifications = result.scalars().all()
-
-        if notifications:
-            for notification in notifications:
-                await update.message.reply_text(f"Уведомление: {notification.title}\n\n{notification.message}")
-                notification.is_sent = True
-                session.add(notification)
-            await session.commit()
-            await update.message.reply_text("Все актуальные уведомления отправлены.")
-        else:
-            await update.message.reply_text("У вас нет новых уведомлений.")
-
-async def init_db():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
-def main():
-    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('register', register)],
-        states={
-            USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, username)],
-            EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, email)],
-            PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, password)],
-        },
-        fallbacks=[CommandHandler('cancel', cancel)]
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "Привет! Я бот для уведомлений. Используйте команду /register для регистрации."
     )
 
-    application.add_handler(conv_handler)
+async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async with async_session() as session:
+        user_id = update.effective_user.id
+        username = update.effective_user.username
+        if not username:
+            await update.message.reply_text(
+                "У вас не установлен username в Telegram. Пожалуйста, установите его и попробуйте снова."
+            )
+            return
+        try:
+            # Проверяем, зарегистрирован ли пользователь
+            result = await session.execute(
+                select(User).filter(User.telegram_id == user_id)
+            )
+            user = result.scalars().first()
+            if user:
+                await update.message.reply_text(
+                    "Вы уже зарегистрированы. Если вы хотите обновить свою информацию, используйте команду /update_info."
+                )
+            else:
+                # Создаём нового пользователя
+                new_user = User(
+                    username=username,
+                    telegram_id=user_id
+                )
+                session.add(new_user)
+                await session.commit()
+                await update.message.reply_text("Регистрация успешна!")
+        except Exception as e:
+            logger.error(f"Ошибка при регистрации пользователя: {e}", exc_info=True)
+            await update.message.reply_text("Произошла ошибка при регистрации. Попробуйте позже.")
+
+async def update_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async with async_session() as session:
+        user_id = update.effective_user.id
+        new_username = update.effective_user.username
+        if not new_username:
+            await update.message.reply_text(
+                "У вас не установлен username в Telegram. Пожалуйста, установите его и попробуйте снова."
+            )
+            return
+        try:
+            # Проверяем, зарегистрирован ли пользователь
+            result = await session.execute(
+                select(User).filter(User.telegram_id == user_id)
+            )
+            user = result.scalars().first()
+            if user:
+                old_username = user.username
+                user.username = new_username
+                await session.commit()
+                await update.message.reply_text(f"Информация обновлена! Ваше имя пользователя изменено с '{old_username}' на '{new_username}'.")
+            else:
+                await update.message.reply_text(
+                    "Вы не зарегистрированы. Используйте команду /register для регистрации."
+                )
+        except Exception as e:
+            logger.error(f"Ошибка при обновлении информации пользователя: {e}", exc_info=True)
+            await update.message.reply_text("Произошла ошибка. Попробуйте позже.")
+
+async def check_notifications(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async with async_session() as session:
+        current_time = datetime.now(timezone.utc)
+
+        try:
+            result = await session.execute(
+                select(Notification)
+                .join(User)
+                .filter(
+                    User.telegram_id == update.effective_user.id,
+                    Notification.is_sent == False
+                )
+            )
+            notifications = result.scalars().all()
+
+            if not notifications:
+                await update.message.reply_text("У вас нет новых уведомлений.")
+                return
+
+            notifications_sent = False
+            future_notifications = []
+
+            for notif in notifications:
+                # Приводим notif.send_date к осведомлённому datetime
+                if notif.send_date.tzinfo is None:
+                    notif_send_date = notif.send_date.replace(tzinfo=timezone.utc)
+                else:
+                    notif_send_date = notif.send_date
+
+                if notif_send_date <= current_time:
+                    # Отправка уведомления пользователю
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text=f"{notif.title}\n\n{notif.message}"
+                    )
+                    notif.is_sent = True
+                    notifications_sent = True
+                    await session.commit()
+                else:
+                    future_notifications.append(notif)
+
+            if notifications_sent:
+                await update.message.reply_text("Все новые уведомления отправлены.")
+            elif future_notifications:
+                await update.message.reply_text("У вас есть уведомления, запланированные на будущее время.")
+            else:
+                await update.message.reply_text("У вас нет новых уведомлений.")
+
+        except Exception as e:
+            logger.error(f"Ошибка при проверке уведомлений: {e}", exc_info=True)
+            await update.message.reply_text("Произошла ошибка при проверке уведомлений.")
+
+if __name__ == '__main__':
+    application = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+
+    # Регистрация обработчиков команд
     application.add_handler(CommandHandler('start', start))
+    application.add_handler(CommandHandler('register', register))
     application.add_handler(CommandHandler('update_info', update_info))
     application.add_handler(CommandHandler('check_notifications', check_notifications))
 
-    # Инициализация базы данных
-    asyncio.get_event_loop().run_until_complete(init_db())
-
+    # Запуск бота
     application.run_polling()
-
-if __name__ == '__main__':
-    main()

@@ -7,9 +7,8 @@ services:
       - redis
       - db
     environment:
-      - DATABASE_URL=postgresql+asyncpg://postgres:adminadmin@db/selection_project
-      - DATABASE_URL_SYNC=postgresql://postgres:adminadmin@db/selection_project
-      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
     volumes:
       - .:/app
     networks:
@@ -25,8 +24,9 @@ services:
       - redis
       - db
     environment:
-      - DATABASE_URL=postgresql+asyncpg://postgres:adminadmin@db/selection_project
-      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL_SYNC=${DATABASE_URL_SYNC}
+      - REDIS_URL=${REDIS_URL}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
     volumes:
       - .:/app
     networks:
@@ -41,8 +41,8 @@ services:
       - redis
       - db
     environment:
-      - DATABASE_URL=postgresql+asyncpg://postgres:adminadmin@db/selection_project
-      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL_SYNC=${DATABASE_URL_SYNC}
+      - REDIS_URL=${REDIS_URL}
     volumes:
       - .:/app
       - celerybeat_data:/tmp
@@ -57,7 +57,7 @@ services:
       - db
       - redis
     environment:
-      - DATABASE_URL=postgresql+asyncpg://postgres:adminadmin@db/selection_project
+      - DATABASE_URL=${DATABASE_URL}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
     volumes:
       - .:/app
